@@ -79,26 +79,29 @@
         font-size: 14px;
         color: var(--ink-soft);
       }
+      /* Sized from the screen's shorter side, so phones get smaller buttons in either orientation
+         and the size doesn't jump when one is turned. Computers stay at the largest size. */
       #controls {
         position: fixed;
-        right: calc(20px + env(safe-area-inset-right));
-        bottom: calc(20px + env(safe-area-inset-bottom));
+        right: calc(clamp(10px, 3.4vmin, 20px) + env(safe-area-inset-right));
+        bottom: calc(clamp(10px, 3.4vmin, 20px) + env(safe-area-inset-bottom));
         display: flex;
         flex-wrap: wrap;
         justify-content: flex-end;
-        gap: 10px;
-        max-width: calc(100vw - 32px);
+        gap: clamp(8px, 2.2vmin, 10px);
+        max-width: calc(100vw - 20px);
         pointer-events: none;
       }
       .control {
+        position: relative;
         display: none;
-        min-height: 44px;
-        padding: 0 20px;
+        min-height: clamp(28px, 8vmin, 44px);
+        padding: 0 clamp(10px, 3vmin, 20px);
         border: 1px solid rgba(255, 228, 170, 0.5);
         border-radius: 22px;
         background: rgba(24, 16, 8, 0.62);
         color: var(--ink);
-        font: italic 16px var(--serif);
+        font: italic clamp(12px, 3.2vmin, 16px) var(--serif);
         letter-spacing: 0.03em;
         white-space: nowrap;
         cursor: pointer;
@@ -117,6 +120,19 @@
           opacity: 0;
         }
       }
+      /* Up in the sky, because it's always there, and at the bottom it would sit under the opening
+         hint on a phone. */
+      #fullscreen {
+        position: fixed;
+        top: calc(clamp(10px, 3.4vmin, 20px) + env(safe-area-inset-top));
+        right: calc(clamp(10px, 3.4vmin, 20px) + env(safe-area-inset-right));
+      }
+      /* A smaller button still needs to be easy to press, so its touch area stays about 44px tall. */
+      .control::after {
+        content: '';
+        position: absolute;
+        inset: calc((clamp(28px, 8vmin, 44px) - 44px) / 2) -3px;
+      }
       .control:hover {
         background: rgba(60, 40, 18, 0.8);
       }
@@ -131,7 +147,7 @@
     <div id="veil"><span id="veil-text">The sands are settling</span></div>
     <div id="hint">
       Touch the runes and gems.
-      <small>Your first touch wakes the wind. A closed ring stays on until touched again. A dashed ring rings out, longer the more dashes it has. Drag the sand to walk around.</small>
+      <small>Your first touch wakes the wind. A closed ring stays on until touched again. A dashed ring rings out, longer the more dashes it has. <span id="hint-move"></span></small>
     </div>
     <!-- Recentre stays on the outside: the other button can vanish on its own as tones end, and
          that mustn't slide this one out from under a cursor that's about to press it. -->
@@ -139,6 +155,7 @@
       <button id="hush" class="control" type="button">Still the stones</button>
       <button id="recentre" class="control" type="button">Recentre view</button>
     </div>
+    <button id="fullscreen" class="control" type="button">Fullscreen</button>
     <script type="module">
 const __modules = [];
 __modules[0] = (() => {
@@ -1767,12 +1784,24 @@ function addRuin(b, spec, P, uvOf) {
   const { w, h, t, seed } = spec;
   const random = seededRandom(seed * 7919);
   const lean = (random() - 0.5) * 1.1;
+  // However the break runs, it stays above every rune and gem on the stone, falling away either
+  // side, so none of them is left hanging in the air when seen up close.
+  const carried = (s) => {
+    const x = (s - 0.5) * w;
+    let top = 0;
+    for (const e of spec.elements) {
+      const reach = e.size * 1.5;
+      const beyond = Math.max(Math.abs(x - e.u) - reach, 0);
+      top = Math.max(top, e.v + reach + 0.1 - beyond * 1.1);
+    }
+    return top;
+  };
   const profile = (s, side) => {
     const u = s * 2 - 1;
     const broad = noise2(s * 2.1 + seed, side * 0.6 + seed * 0.37) * 0.3;
     const teeth = noise2(s * 8.3 + seed * 3.1, side * 1.9) * 0.14 + noise2(s * 21 + seed, side * 3.7) * 0.05;
     const v = 0.72 + u * lean * 0.26 + broad + teeth;
-    return h * Math.max(0.38, Math.min(1.08, v));
+    return Math.max(h * Math.max(0.38, Math.min(1.08, v)), carried(s) + teeth * 0.5);
   };
   const X = (i) => (i / columns - 0.5) * w;
   const front = [];
@@ -2259,6 +2288,9 @@ class Stones {
       halfX: s.spec.w / 2,
       minY: -1,
       maxY: s.isMonolith ? MONOLITH.h + 1.2 : s.spec.h * 1.05,
+      // How high it blocks the view of what's behind. A ruin's broken top averages well below its
+      // highest tooth, and a gem you can see over it should still answer to a touch.
+      coverY: s.isMonolith ? MONOLITH.h + 1.2 : s.spec.h * 0.72,
       halfZ: s.spec.t / 2,
     }));
     this.stones = stones;
@@ -5441,7 +5473,7 @@ class Instrument {
 return { Instrument };
 })();
 __modules[20] = (() => {
-const { clamp, invert, lookAt, mix, multiply, normalize, ortho, perspective, project, sub } = __modules[0];
+const { add, clamp, dot, invert, lookAt, mix, multiply, normalize, ortho, perspective, project, scale, sub } = __modules[0];
 const { checkFramebuffer, createTexture } = __modules[1];
 const { createNoiseTexture } = __modules[2];
 const { Terrain, WIND } = __modules[4];
@@ -5460,6 +5492,27 @@ const FAR = 30000;
 const SHADOW_SIZE = 4096;
 const SHADOW_EXTENT = 340;
 const HOME_DISTANCE = 48;
+const LOOK_HEIGHT = 7.9;
+
+// How you move around the scene. 'pan' slides the view in any direction and zooms towards what
+// you point at, which gets you right up to any stone. 'orbit' walks around the monolith, always
+// facing it. The input code treats both alike, so this could become a choice for the viewer.
+const CAMERA_MODE = 'pan';
+
+const MOVE_HINT = {
+  pan: 'Drag the sand to move, and pinch or scroll to get closer.',
+  orbit: 'Drag the sand to walk around.',
+};
+
+// How far pan mode can go, in metres.
+const PAN_SIDE_LIMIT = 34;
+const PAN_CEILING = 34;
+const PAN_FLOOR = 1.1; // Above the sand.
+const PAN_NEAREST_Z = -5; // Far enough in to reach the towers at the back.
+const PAN_FARTHEST = 1.4; // As a multiple of the opening distance.
+const STONE_CLEARANCE = 1.3; // The eye never gets closer to a stone than this.
+const CLOSEST_LOOK = 3.4; // Zooming at a stone stops this far from it.
+const STAGE_Z = -9; // The back of the stones: where zooming aims when no stone is being pointed at.
 
 // Sun high on the right and slightly ahead of the viewer: the monolith's face stays in its own
 // shade (a dark mirror), its right edge catches the light, and its shadow rakes toward the left.
@@ -5501,15 +5554,27 @@ function gustAt(t) {
   return strength * w * w;
 }
 
+// Pull back on narrow screens so the ruins on either side stay in view.
+const fitDistance = (aspect) => HOME_DISTANCE * clamp(1.45 / aspect, 1, 1.7);
+
 class Camera {
-  constructor(terrain) {
+  // `stones` are what you can look at. `solids` are everything the eye has to stay out of.
+  constructor(terrain, mode, stones, solids) {
     this.terrain = terrain;
+    this.mode = mode;
+    this.stones = stones;
+    this.solids = solids;
     this.yaw = 0;
     this.lift = 0;
     this.distance = HOME_DISTANCE;
     this.targetYaw = 0;
     this.targetLift = 0;
     this.targetDistance = HOME_DISTANCE;
+    this.offset = [0, 0, 0]; // Pan mode: how far the eye has moved from the opening view.
+    this.targetOffset = [0, 0, 0]; // Where it's heading.
+    this.aim = [0, 0, 0]; // Where the gesture wants it, before stones and sand have had their say.
+    this.gliding = false;
+    this.nearDepth = HOME_DISTANCE;
     this.parallax = [0, 0];
     this.smoothParallax = [0, 0];
     this.eye = [0, 3, HOME_DISTANCE];
@@ -5518,26 +5583,15 @@ class Camera {
   }
 
   update(dt, time, aspect) {
-    const k = 1 - Math.exp(-dt * 3.2);
-    this.yaw += (this.targetYaw - this.yaw) * k;
-    this.lift += (this.targetLift - this.lift) * k;
-    this.distance += (this.targetDistance - this.distance) * k;
     for (let i = 0; i < 2; i++) {
       this.smoothParallax[i] += (this.parallax[i] - this.smoothParallax[i]) * (1 - Math.exp(-dt * 1.6));
     }
     const motion = this.reducedMotion ? 0 : 1;
-    const drift = Math.sin(time * 0.043) * 0.022 * motion + this.smoothParallax[0] * 0.022 * motion;
-    const yaw = this.yaw + drift;
-
-    // Pull back on narrow screens so the ruins on either side stay in view.
-    const distance = this.distance * clamp(1.45 / aspect, 1, 1.7);
-    const eye = [Math.sin(yaw) * distance, 0, Math.cos(yaw) * distance];
-    const bob = Math.sin(time * 0.061 + 1.3) * 0.09 * motion + this.smoothParallax[1] * 0.16 * motion;
-    eye[1] = this.terrain.sample(eye[0], eye[2]) + 2.1 + this.lift + bob;
+    const z = fitDistance(aspect);
+    this.home = [0, this.terrain.sample(0, z) + 2.1, z];
+    const { eye, target } = this.mode === 'pan' ? this.panPose(dt, time, motion) : this.orbitPose(dt, time, aspect, motion);
     this.eye = eye;
-    this.effectiveYaw = yaw;
 
-    const target = [0, mix(7.9, 9.6, clamp(this.lift / 14)), 0];
     const fovY = (mix(43, 58, clamp((1.6 - aspect) / 1)) * Math.PI) / 180;
     this.fovY = fovY;
     const view = lookAt(eye, target, [0, 1, 0]);
@@ -5547,11 +5601,149 @@ class Camera {
     this.invVP = invert(this.vp);
     this.right = [view[0], view[4], view[8]];
     this.up = [view[1], view[5], view[9]];
+    this.forward = normalize(sub(target, eye));
+    this.aspect = aspect;
+    this.nearDepth += (this.closestStoneDepth(eye) - this.nearDepth) * (dt > 0 ? 1 - Math.exp(-dt * 2) : 1);
+  }
+
+  orbitPose(dt, time, aspect, motion) {
+    const k = 1 - Math.exp(-dt * 3.2);
+    this.yaw += (this.targetYaw - this.yaw) * k;
+    this.lift += (this.targetLift - this.lift) * k;
+    this.distance += (this.targetDistance - this.distance) * k;
+    const drift = Math.sin(time * 0.043) * 0.022 * motion + this.smoothParallax[0] * 0.022 * motion;
+    const yaw = this.yaw + drift;
+    this.effectiveYaw = yaw;
+
+    const distance = (this.distance * fitDistance(aspect)) / HOME_DISTANCE;
+    const eye = [Math.sin(yaw) * distance, 0, Math.cos(yaw) * distance];
+    const bob = Math.sin(time * 0.061 + 1.3) * 0.09 * motion + this.smoothParallax[1] * 0.16 * motion;
+    eye[1] = this.terrain.sample(eye[0], eye[2]) + 2.1 + this.lift + bob;
+    return { eye, target: [0, mix(LOOK_HEIGHT, 9.6, clamp(this.lift / 14)), 0] };
+  }
+
+  // The eye slides around while always facing the way it faces in the opening view. That keeps the
+  // ruins' faces turned towards you, since they're angled to face the opening view.
+  panPose(dt, time, motion) {
+    const k = 1 - Math.exp(-dt * (this.gliding ? 3.2 : 16));
+    for (let i = 0; i < 3; i++) this.offset[i] += (this.targetOffset[i] - this.offset[i]) * k;
+    this.effectiveYaw = 0;
+
+    // The same gentle sway as orbiting, in proportion to the closest stone, so it's never enough
+    // to make a gem hard to hit up close.
+    const sway = this.nearDepth * motion;
+    const eye = add(this.home, this.offset);
+    eye[0] += (Math.sin(time * 0.043) + this.smoothParallax[0]) * 0.022 * sway;
+    eye[1] += ((Math.sin(time * 0.061 + 1.3) * 0.09 + this.smoothParallax[1] * 0.16) * sway) / HOME_DISTANCE;
+    eye[1] = Math.max(eye[1], this.terrain.sample(eye[0], eye[2]) + PAN_FLOOR);
+    const look = normalize([0, LOOK_HEIGHT - this.home[1], -this.home[2]]);
+    return { eye, target: add(eye, look) };
+  }
+
+  // How far away the closest stone in view is from a point, or the back of the stones if none is.
+  closestStoneDepth(from) {
+    let nearest = from[2] - STAGE_Z;
+    const tanY = Math.tan(this.fovY / 2);
+    const tanX = tanY * this.aspect;
+    for (const { P, maxY } of this.stones) {
+      const toStone = sub(add(P.position, scale(P.up, maxY / 2)), from);
+      const depth = dot(toStone, this.forward);
+      const inView = Math.abs(dot(toStone, this.right)) < depth * tanX && Math.abs(dot(toStone, this.up)) < depth * tanY;
+      if (depth > 1 && inView) nearest = Math.min(nearest, depth);
+    }
+    return Math.max(nearest, CLOSEST_LOOK);
+  }
+
+  // How far along a ray the first solid thing is, or null if it hits nothing.
+  solidAlong(from, ray) {
+    let nearest = null;
+    for (const box of this.solids) {
+      const t = rayBox(box, from, ray);
+      if (t !== null && (nearest === null || t < nearest)) nearest = t;
+    }
+    return nearest;
+  }
+
+  // The depth to move at when a drag starts here, so that what's under the pointer follows it:
+  // the stone at this point, or otherwise the closest stone in view.
+  grabDepth(ndcX, ndcY) {
+    if (this.mode !== 'pan') return 0;
+    const ray = this.ray(ndcX, ndcY);
+    const hit = this.solidAlong(this.eye, ray);
+    return hit === null ? this.nearDepth : hit * dot(ray, this.forward);
+  }
+
+  // A one-finger or mouse drag across the screen, in pixels. Stones and sand stop it dead, with
+  // no travel to win back when it reverses.
+  drag(dx, dy, depth, viewHeight) {
+    if (this.mode !== 'pan') {
+      this.targetYaw = clamp(this.targetYaw - dx * 0.0032, -0.82, 0.82);
+      this.targetLift = clamp(this.targetLift + dy * 0.03, 0, 13);
+      return;
+    }
+    this.slide(dx, dy, depth, viewHeight);
+    this.settle();
+  }
+
+  slide(dx, dy, depth, viewHeight) {
+    this.gliding = false;
+    const perPixel = (2 * depth * Math.tan(this.fovY / 2)) / viewHeight;
+    this.aim = add(this.aim, add(scale(this.right, -dx * perPixel), scale(this.up, dy * perPixel)));
+    this.followAim();
+  }
+
+  // Ends a gesture: the next one starts from where the eye actually is.
+  settle() {
+    this.aim = [...this.targetOffset];
+  }
+
+  // Zooms by `factor`: above 1 is closer. In pan mode it moves along the ray through the given
+  // point, so whatever is under the pointer stays under it as it grows.
+  zoom(factor, ndcX, ndcY) {
+    if (this.mode !== 'pan') {
+      this.targetDistance = clamp(this.targetDistance / factor, 26, 70);
+      return;
+    }
+    this.gliding = false;
+    const from = add(this.home, this.aim);
+    const ray = this.ray(ndcX, ndcY);
+    // Pointing at a stone closes in on that stone. Pointing at open sand or sky moves in proportion
+    // to the closest stone in view, so one big pinch can't carry you past everything.
+    const stone = this.solidAlong(from, ray);
+    const distance = stone ?? this.closestStoneDepth(from) / dot(ray, this.forward);
+    let move = distance * (1 - 1 / factor);
+    if (stone !== null && factor > 1) move = Math.min(move, Math.max(stone - CLOSEST_LOOK, 0));
+    // Stop at the near and far limits, rather than sliding sideways along them.
+    const z = clamp(from[2] + ray[2] * move, PAN_NEAREST_Z, this.home[2] * PAN_FARTHEST);
+    move = (z - from[2]) / ray[2];
+    this.aim = add(this.aim, scale(ray, move));
+    this.followAim();
+  }
+
+  // Sends the eye towards the aim, going around anything in the way. Only the eye gets bent, not
+  // the aim, so a zoom that skirts a stone on its way past comes back onto its line afterwards.
+  followAim() {
+    const aim = add(this.home, this.aim);
+    aim[0] = clamp(aim[0], -PAN_SIDE_LIMIT, PAN_SIDE_LIMIT);
+    aim[1] = Math.min(aim[1], PAN_CEILING);
+    aim[2] = clamp(aim[2], PAN_NEAREST_Z, this.home[2] * PAN_FARTHEST);
+    this.aim = sub(aim, this.home);
+    const eye = [...aim];
+    // Twice, because rising clear of the sand can lift the eye back into a leaning stone.
+    for (let pass = 0; pass < 2; pass++) {
+      for (const box of this.solids) pushOutOfBox(box, eye, STONE_CLEARANCE);
+      eye[1] = clamp(eye[1], this.terrain.sample(eye[0], eye[2]) + PAN_FLOOR, PAN_CEILING);
+    }
+    this.targetOffset = sub(eye, this.home);
   }
 
   // Whether the viewer has really moved from the opening view. The margins mean a slightly shaky
   // click doesn't count, and the camera's slow drift and pointer parallax aren't included at all.
   get awayFromHome() {
+    if (this.mode === 'pan') {
+      const [x, y, z] = this.targetOffset;
+      return Math.hypot(x, y) > 0.5 || Math.abs(z) > 1.5;
+    }
     return Math.abs(this.targetYaw) > 0.03 || this.targetLift > 0.4 || Math.abs(this.targetDistance - HOME_DISTANCE) > 1.5;
   }
 
@@ -5560,6 +5752,9 @@ class Camera {
     this.targetYaw = 0;
     this.targetLift = 0;
     this.targetDistance = HOME_DISTANCE;
+    this.targetOffset = [0, 0, 0];
+    this.aim = [0, 0, 0];
+    this.gliding = true;
   }
 
   ray(ndcX, ndcY) {
@@ -5642,28 +5837,49 @@ function pick(ndcX, ndcY, camera, elements, boxes, viewportHeight) {
 
 function isHidden(element, elementDistance, ray, eye, boxes) {
   for (const box of boxes) {
-    const { P } = box;
-    const rel = sub(eye, P.position);
-    const o = [rel[0] * P.right[0] + rel[1] * P.right[1] + rel[2] * P.right[2], rel[0] * P.up[0] + rel[1] * P.up[1] + rel[2] * P.up[2], rel[0] * P.forward[0] + rel[1] * P.forward[1] + rel[2] * P.forward[2]];
-    const d = [ray[0] * P.right[0] + ray[1] * P.right[1] + ray[2] * P.right[2], ray[0] * P.up[0] + ray[1] * P.up[1] + ray[2] * P.up[2], ray[0] * P.forward[0] + ray[1] * P.forward[1] + ray[2] * P.forward[2]];
-    const lo = [-box.halfX, box.minY, -box.halfZ];
-    const hi = [box.halfX, box.maxY, box.halfZ];
-    let tNear = -Infinity;
-    let tFar = Infinity;
-    let hit = true;
-    for (let i = 0; i < 3; i++) {
-      if (Math.abs(d[i]) < 1e-6) {
-        if (o[i] < lo[i] || o[i] > hi[i]) hit = false;
-      } else {
-        const a = (lo[i] - o[i]) / d[i];
-        const b = (hi[i] - o[i]) / d[i];
-        tNear = Math.max(tNear, Math.min(a, b));
-        tFar = Math.min(tFar, Math.max(a, b));
-      }
-    }
-    if (hit && tNear <= tFar && tNear > 0 && tNear < elementDistance - 1.2) return true;
+    const t = rayBox(box, eye, ray, box.coverY);
+    if (t !== null && t < elementDistance - 1.2) return true;
   }
   return false;
+}
+
+// A point in a stone's own coordinates: across, up and out from its face.
+const toBoxSpace = ({ P }, v) => [dot(v, P.right), dot(v, P.up), dot(v, P.forward)];
+
+// How far along a ray it enters a box, or null if it misses or starts inside.
+function rayBox(box, from, ray, top = box.maxY) {
+  const o = toBoxSpace(box, sub(from, box.P.position));
+  const d = toBoxSpace(box, ray);
+  const lo = [-box.halfX, box.minY, -box.halfZ];
+  const hi = [box.halfX, top, box.halfZ];
+  let tNear = -Infinity;
+  let tFar = Infinity;
+  for (let i = 0; i < 3; i++) {
+    if (Math.abs(d[i]) < 1e-6) {
+      if (o[i] < lo[i] || o[i] > hi[i]) return null;
+    } else {
+      const a = (lo[i] - o[i]) / d[i];
+      const b = (hi[i] - o[i]) / d[i];
+      tNear = Math.max(tNear, Math.min(a, b));
+      tFar = Math.min(tFar, Math.max(a, b));
+    }
+  }
+  return tNear <= tFar && tNear > 0 ? tNear : null;
+}
+
+// Moves a point out through the nearest side or top of a box, if it's within `margin` of it.
+function pushOutOfBox(box, point, margin) {
+  const { P } = box;
+  const [x, y, z] = toBoxSpace(box, sub(point, P.position));
+  const sideways = box.halfX + margin - Math.abs(x);
+  const upwards = box.maxY + margin - y;
+  const outwards = box.halfZ + margin - Math.abs(z);
+  if (sideways <= 0 || upwards <= 0 || outwards <= 0) return;
+  // The shortest way out, except downward: under a leaning stone, that only leads into the sand.
+  const ways = [scale(P.forward, z < 0 ? -outwards : outwards), scale(P.right, x < 0 ? -sideways : sideways), scale(P.up, upwards)];
+  const open = ways.filter((way) => way[1] > -0.2 * Math.hypot(...way));
+  const push = open.reduce((best, way) => (Math.hypot(...way) < Math.hypot(...best) ? way : best));
+  for (let i = 0; i < 3; i++) point[i] += push[i];
 }
 
 async function boot() {
@@ -5690,7 +5906,8 @@ async function boot() {
   const instrument = new Instrument(elements);
   const autoplay = new Autoplay(instrument, elements);
   const orrery = new Orrery(gl, stones.orreryPlacement, autoplay);
-  const camera = new Camera(terrain);
+  const dial = { P: stones.orreryPlacement, halfX: 1.4, minY: -1.4, maxY: 1.4, halfZ: 0.5 };
+  const camera = new Camera(terrain, CAMERA_MODE, boxes, [...boxes, dial]);
   const post = new Post(gl);
 
   const shadow = buildShadowMap(gl, (vp) => {
@@ -5758,6 +5975,8 @@ async function boot() {
   // ── Input ─────────────────────────────────────────────────────────────────────
   const pointers = new Map();
   let hovered = null;
+  let lastWheel = -Infinity;
+  let landedGap = 0;
   const refreshRecentre = () => {
     const away = camera.awayFromHome;
     recentreButton.classList.toggle('shown', away);
@@ -5779,6 +5998,13 @@ async function boot() {
   };
   canvas.addEventListener('pointerdown', (ev) => {
     canvas.setPointerCapture(ev.pointerId);
+    const [nx, ny] = toNdc(ev);
+    const depth = camera.grabDepth(nx, ny);
+    // A finger joining a drag has come to pinch, so it shouldn't play whatever it lands on.
+    if (camera.mode === 'pan' && [...pointers.values()].some((p) => !p.playing && !p.onOrrery)) {
+      pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY, playing: false, depth });
+      return;
+    }
     // The orrery stands in front of everything else, so it gets first refusal.
     if (overOrrery(ev)) {
       pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY, onOrrery: true });
@@ -5788,15 +6014,20 @@ async function boot() {
       return;
     }
     const element = pickAt(ev);
-    pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY, playing: !!element, last: element });
+    pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY, playing: !!element, last: element, depth });
     if (element) {
       instrument.press(element);
       hint.classList.add('gone');
     }
+    if (pointers.size === 2) {
+      const [a, b] = pointers.values();
+      landedGap = Math.hypot(a.x - b.x, a.y - b.y);
+    }
   });
   canvas.addEventListener('pointermove', (ev) => {
     const [nx, ny] = toNdc(ev);
-    camera.parallax = [nx, ny];
+    // When dragging moves the view directly, the pointer can't also be nudging it.
+    if (camera.mode !== 'pan' || !pointers.size) camera.parallax = [nx, ny];
     const state = pointers.get(ev.pointerId);
     if (!state) {
       if (ev.pointerType === 'mouse') {
@@ -5806,7 +6037,18 @@ async function boot() {
       }
       return;
     }
+    const dx = ev.clientX - state.x;
+    const dy = ev.clientY - state.y;
+    // Every finger keeps its position up to date, because a pinch measures between two of them.
+    state.x = ev.clientX;
+    state.y = ev.clientY;
     if (state.onOrrery) return;
+    // Two fingers on gems are playing them, until they spread or close: then it's a pinch after all.
+    // Up close gems are big, and otherwise a pinch that lands on two of them would never zoom.
+    if (camera.mode === 'pan' && state.playing && pointers.size === 2) {
+      const [a, b] = pointers.values();
+      if (a.playing && b.playing && Math.abs(Math.hypot(a.x - b.x, a.y - b.y) - landedGap) > 18) a.playing = b.playing = false;
+    }
     if (state.playing) {
       const element = pickAt(ev);
       if (element && element !== state.last) instrument.strum(element);
@@ -5814,23 +6056,29 @@ async function boot() {
       return;
     }
     if (pointers.size === 1) {
-      // Dragging empty desert walks around the monolith.
-      camera.targetYaw = clamp(camera.targetYaw - (ev.clientX - state.x) * 0.0032, -0.82, 0.82);
-      camera.targetLift = clamp(camera.targetLift + (ev.clientY - state.y) * 0.03, 0, 13);
+      camera.drag(dx, dy, state.depth, canvas.clientHeight);
       canvas.style.cursor = 'grabbing';
     } else if (pointers.size === 2) {
       const others = [...pointers.entries()].filter(([id]) => id !== ev.pointerId);
       const other = others[0][1];
-      const before = Math.hypot(state.x - other.x, state.y - other.y);
+      const before = Math.hypot(ev.clientX - dx - other.x, ev.clientY - dy - other.y);
       const after = Math.hypot(ev.clientX - other.x, ev.clientY - other.y);
-      camera.targetDistance = clamp(camera.targetDistance * (before / Math.max(after, 1)), 26, 70);
+      const [mx, my] = toNdc({ clientX: (ev.clientX + other.x) / 2, clientY: (ev.clientY + other.y) / 2 });
+      camera.zoom(Math.max(after, 1) / Math.max(before, 1), mx, my);
+      // Two fingers moving together slide the view as they pinch. In pan mode that matters up
+      // close, where a stone can fill the screen with little sand left to drag.
+      if (camera.mode === 'pan') camera.slide(dx / 2, dy / 2, camera.grabDepth(mx, my), canvas.clientHeight);
     }
     refreshRecentre();
-    state.x = ev.clientX;
-    state.y = ev.clientY;
   });
   const endPointer = (ev) => {
     pointers.delete(ev.pointerId);
+    camera.settle();
+    // The view may have changed since any remaining finger landed, so it needs a fresh grip.
+    for (const p of pointers.values()) {
+      const [nx, ny] = toNdc({ clientX: p.x, clientY: p.y });
+      p.depth = camera.grabDepth(nx, ny);
+    }
     if (ev.pointerType === 'mouse') canvas.style.cursor = hovered || orrery.hovering ? 'pointer' : 'grab';
   };
   canvas.addEventListener('pointerup', endPointer);
@@ -5843,7 +6091,13 @@ async function boot() {
   });
   canvas.addEventListener('wheel', (ev) => {
     ev.preventDefault();
-    camera.targetDistance = clamp(camera.targetDistance * Math.exp(ev.deltaY * 0.0009), 26, 70);
+    const [nx, ny] = toNdc(ev);
+    // A pause between wheel steps ends that gesture.
+    if (ev.timeStamp - lastWheel > 300) camera.settle();
+    lastWheel = ev.timeStamp;
+    // Trackpad pinches arrive as small wheel steps with the control key flagged.
+    const rate = camera.mode !== 'pan' ? 0.0009 : ev.ctrlKey ? 0.008 : 0.002;
+    camera.zoom(Math.exp(-ev.deltaY * rate), nx, ny);
     refreshRecentre();
   }, { passive: false });
   recentreButton.addEventListener('click', () => {
@@ -5857,12 +6111,21 @@ async function boot() {
     window.addEventListener(type, () => instrument.ensureAudio());
   }
 
-  const refreshHush = () => hushButton.classList.toggle('shown', instrument.activeCount > 0);
+  // Stilling the stones stops the orrery too, or it would only start them up again. It stays on
+  // offer while the orrery runs, even in a gap between notes.
+  const refreshHush = () => hushButton.classList.toggle('shown', instrument.activeCount > 0 || autoplay.enabled);
   instrument.onActivity = refreshHush;
-  hushButton.addEventListener('click', () => instrument.hush());
+  const still = () => {
+    instrument.hush();
+    autoplay.stop();
+  };
+  hushButton.addEventListener('click', still);
   window.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape') instrument.hush();
+    // In fullscreen, Esc is the browser's way out, and shouldn't silence everything as well.
+    if (ev.key === 'Escape' && !isFullscreen()) still();
   });
+
+  document.getElementById('hint-move').textContent = MOVE_HINT[CAMERA_MODE];
 
   // ── Frame ─────────────────────────────────────────────────────────────────────
   const lightPos = new Float32Array(16 * 4);
@@ -6019,6 +6282,30 @@ async function boot() {
   // Handy from the browser console.
   window.monolith = { instrument, autoplay, orrery, elements, camera, insects, debug, gustAt, get time() { return elapsed; }, setTime(t) { elapsed = t; } };
 }
+
+const isFullscreen = () => !!(document.fullscreenElement ?? document.webkitFullscreenElement);
+
+// On offer whenever the page isn't fullscreen, from the moment it loads. It stays hidden where
+// the browser can't do it, as a button that does nothing is worse than none.
+function setUpFullscreen() {
+  const button = document.getElementById('fullscreen');
+  const page = document.documentElement;
+  const enter = page.requestFullscreen ?? page.webkitRequestFullscreen;
+  if (!enter || !(document.fullscreenEnabled ?? document.webkitFullscreenEnabled)) return;
+  const refresh = () => button.classList.toggle('shown', !isFullscreen());
+  document.addEventListener('fullscreenchange', refresh);
+  document.addEventListener('webkitfullscreenchange', refresh);
+  button.addEventListener('click', async () => {
+    try {
+      await enter.call(page);
+    } catch (error) {
+      console.warn('Fullscreen refused:', error);
+    }
+  });
+  refresh();
+}
+
+setUpFullscreen();
 
 boot().catch((error) => {
   console.error(error);
