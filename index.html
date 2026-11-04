@@ -4332,6 +4332,9 @@ __modules[15] = (() => {
 const WIND_LEVEL = 0.3;
 const SAND_LEVEL = 0.16;
 
+// The sand is off until it has been adjusted. Set this to true to hear it again.
+const SAND_ON = false;
+
 const FADE_IN_SECONDS = 5;
 
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -4406,7 +4409,7 @@ class Ambience {
     this.out = engine.gain(0);
     this.out.connect(engine.level);
     this.buildWind();
-    this.buildSand();
+    if (SAND_ON) this.buildSand();
 
     this.out.gain.setValueAtTime(0, when);
     this.out.gain.linearRampToValueAtTime(1, when + FADE_IN_SECONDS);
@@ -4518,7 +4521,7 @@ class Ambience {
     if (Math.abs(value - this.gust) < 0.004) return;
     const easing = value < this.gust;
     this.gust = value;
-    this.sand.gain.setTargetAtTime(SAND_LEVEL * value ** 1.4, when, easing ? 0.7 : 0.2);
+    this.sand?.gain.setTargetAtTime(SAND_LEVEL * value ** 1.4, when, easing ? 0.7 : 0.2);
     this.lift.gain.setTargetAtTime(1 + value * 0.6, when, 0.5);
     this.bright.offset.setTargetAtTime(value * 520, when, 0.6);
   }
